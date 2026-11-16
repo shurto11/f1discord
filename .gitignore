@@ -1,0 +1,5 @@
+design.md
+__pycache__/
+*.pyc
+.claude/*.local.toml
+config.json
