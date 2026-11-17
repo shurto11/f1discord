@@ -9,15 +9,21 @@ X も Wayland も無い fbterm + tmux の画面の上に重ねる。消すとき
     ./f1discord.py                       # 常駐して、新着を表示する
     ./f1discord.py --test 名前 "本文"    # 中継につながず、1 回だけ表示して終わる (本文は何個でも。@名前:本文 で別の人)
 
-設定 (環境変数):
-    F1DISCORD_URL     中継の地図のサーバー。既定 http://100.85.213.75:8020 (dynabook の tailnet の IP)
-    F1DISCORD_POS     パネルの位置。left か right。既定 right
-    F1DISCORD_WIDTH   パネルの幅 (ピクセル)。既定 330
-    F1DISCORD_FB      フレームバッファ。既定 /dev/fb0
-
-名前ごとの番号と色は config.json (このファイルの隣。無くてよい) で決められる:
-    {"drivers": {"名前": {"number": 81, "color": "#FF8000"}}}
-無い人は、名前から決まる番号と色になる (いつも同じ)。
+設定は config.json (このファイルの隣。無くてよい) に書く。変えたら systemctl --user restart f1discord。
+同じ名前を大文字にして F1DISCORD_ を付けた環境変数 (F1DISCORD_TEXT_SIZE など) があれば、そちらを使う:
+    url           中継の地図のサーバー。既定 http://100.85.213.75:8020 (dynabook の tailnet の IP)
+    pos           パネルの位置。top / bottom と left / right の組み合わせ。既定 bottom-right
+    margin_x      画面の左右の端からの距離 (画面のピクセル数)。既定 0
+    margin_y      画面の上下の端からの距離。既定 64 (画面の下のタスクバーの高さ。パネルの下辺がその上辺に付く)
+                  画面は液晶の全体 (1366x768)。fbterm と tmux が使うのはその左上の 1280x720 だけ
+    scale         全体の大きさの倍率。既定 0.5
+    width         パネルの幅。既定 330
+    text_size     本文の字の大きさ。既定 19
+    channel_size  チャンネル名の字の大きさ。既定 15
+    fb            フレームバッファ。既定 /dev/fb0
+    drivers       名前ごとの番号と色。無い人は、名前から決まる番号と色になる (いつも同じ)
+幅と字の大きさは倍率を掛ける前のピクセル数で、画面ではそれに scale を掛けた大きさになる。例:
+    {"text_size": 26, "channel_size": 20, "drivers": {"名前": {"number": 81, "color": "#FF8000"}}}
 """
 
 import argparse
@@ -41,14 +47,35 @@ import urllib.request
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-URL = os.environ.get("F1DISCORD_URL", "http://100.85.213.75:8020").rstrip("/")
-POS = os.environ.get("F1DISCORD_POS", "right")
-WIDTH = int(os.environ.get("F1DISCORD_WIDTH", 330))
-FB = os.environ.get("F1DISCORD_FB", "/dev/fb0")
+
+def load_config():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+CONFIG = load_config()
+
+
+def setting(name, default):
+    """環境変数 F1DISCORD_<NAME>、無ければ config.json の name、それも無ければ default。型は default に合わせる"""
+    return type(default)(os.environ.get("F1DISCORD_" + name.upper(), CONFIG.get(name, default)))
+
+
+URL = setting("url", "http://100.85.213.75:8020").rstrip("/")
+POS = setting("pos", "bottom-right")
+MARGIN_X = setting("margin_x", 0)
+MARGIN_Y = setting("margin_y", 64)
+SCALE = setting("scale", 0.5)
+WIDTH = setting("width", 330)
+TEXT_SIZE = max(setting("text_size", 19), 6)
+CHANNEL_SIZE = max(setting("channel_size", 15), 6)
+FB = setting("fb", "/dev/fb0")
 
 FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"   # index 0 が JP
 FPS = 15
-MARGIN = 24          # 画面の端からの距離
 PAD = 14             # パネルの中の余白
 MAX_HEIGHT = 560     # パネルの高さの上限。超えたら古い発言から落とす
 MAX_LINES = 7        # 1 つの発言の行数の上限
@@ -66,15 +93,7 @@ TEAM_COLORS = ["#3671C6", "#E8002D", "#27F4D2", "#FF8000", "#229971", "#FF87BC",
                "#52E252", "#B6BABD"]
 
 
-def load_config():
-    try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")) as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-
-
-DRIVERS = {unicodedata.normalize("NFKC", k).casefold(): v for k, v in load_config().get("drivers", {}).items()}
+DRIVERS = {unicodedata.normalize("NFKC", k).casefold(): v for k, v in CONFIG.get("drivers", {}).items()}
 
 
 def hex_color(s):
@@ -161,18 +180,19 @@ class Panel:
 
     HEAD_H = 76
     BAND_H = 58
-    TEXT_SIZE = 19
-    LINE_H = 26
+    LINE_H = round(TEXT_SIZE * 1.37)
 
     def __init__(self, msg):
         self.owner = msg["author"]
         self.number, self.color = driver(self.owner)
-        self.channel = msg.get("channel")
+        # チャンネル名は帯の右に、幅の 4 割まで
+        ch = msg.get("channel")
+        self.channel = ellipsize("#" + clean(ch), font(CHANNEL_SIZE), (WIDTH - PAD * 2) * 0.4) if ch else None
         self.msgs = []
         self.add(msg)
 
     def add(self, msg):
-        f = font(self.TEXT_SIZE)
+        f = font(TEXT_SIZE)
         text = clean(msg["text"]).upper() or "…"
         mine = msg["author"] == self.owner
         lines = wrap("“%s”" % text, f, WIDTH - PAD * 2 - 22)
@@ -204,13 +224,12 @@ class Panel:
         dim = tuple((c + b) // 2 for c, b in zip(self.color, BG_BAND))
         d.text((PAD, top + self.BAND_H // 2), str(self.number), font=font(50), fill=dim, anchor="lm")
         if self.channel:
-            ch = "#" + clean(self.channel)
-            f = font(15)
-            d.text((WIDTH - PAD, top + self.BAND_H // 2), ellipsize(ch, f, 110), font=f, fill=WHITE, anchor="rm")
+            d.text((WIDTH - PAD, top + self.BAND_H // 2), self.channel, font=font(CHANNEL_SIZE), fill=WHITE,
+                   anchor="rm")
         d.rectangle((0, top + self.BAND_H, WIDTH, top + self.BAND_H + 2), fill=self.color)
         # 発言
         y = top + self.BAND_H + 14
-        f = font(self.TEXT_SIZE)
+        f = font(TEXT_SIZE)
         for mine, label, lines in self.msgs:
             if label:
                 d.text((PAD, y + 7), ellipsize(label, font(13), inner), font=font(13), fill=(150, 158, 175),
@@ -228,7 +247,7 @@ class Panel:
     def wave_box(self):
         """波形を描く範囲 (x0, x1, 中心の y, 高さの半分)"""
         x0 = PAD + int(font(50).getlength(str(self.number))) + 12
-        x1 = WIDTH - PAD - (120 if self.channel else 0)
+        x1 = WIDTH - PAD - (int(font(CHANNEL_SIZE).getlength(self.channel)) + 12 if self.channel else 0)
         return x0, x1, self.HEAD_H + self.BAND_H // 2, self.BAND_H // 2 - 8
 
 
@@ -265,7 +284,10 @@ class Framebuffer:
         # FBIOGET_VSCREENINFO: xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bits_per_pixel, grayscale,
         # red / green / blue / transp の (offset, length, msb_right)
         var = struct.unpack("8I12I", fcntl.ioctl(self.fd, 0x4600, bytes(160))[:80])
-        self.width, self.height, _, vyres, _, _, bpp = var[:7]
+        # 見えている大きさ (xres, yres) は fbterm の使う 1280x720 だが、液晶には仮想の大きさ (1366x768) の全体が
+        # 映っているので、そちらを画面の大きさにする
+        _, _, self.width, self.height, _, _, bpp = var[:7]
+        vyres = self.height
         if bpp != 32:
             sys.exit("f1discord: %s が 32bpp でない (%d)" % (path, bpp))
         self.shifts = (var[8], var[11], var[14])        # R, G, B のビット位置
@@ -275,6 +297,14 @@ class Framebuffer:
         self.stride = fix[9]
         self.map = mmap.mmap(self.fd, self.stride * vyres)
         self.pixels = np.frombuffer(self.map, np.uint32).reshape(vyres, self.stride // 4)
+
+    def grab(self, rect):
+        x, y, w, h = rect
+        return self.pixels[y:y + h, x:x + w].copy()
+
+    def put(self, rect, saved):
+        x, y, w, h = rect
+        self.pixels[y:y + h, x:x + w] = saved
 
     def blit(self, img, x, y, rows=None):
         """img (RGB) の上から rows 行を (x, y) に描く"""
@@ -301,7 +331,8 @@ def tmux_socket():
 
 
 def repaint():
-    """パネルを消す。fbterm は自分の描いた字しか覚えていないので、tmux に画面を全部描き直させる"""
+    """パネルを消す。fbterm は自分の描いた字しか覚えていないので、tmux に画面を全部描き直させる。
+    tmux の外 (画面の右端と下) は、呼ぶ側が描く前の絵を取っておいて戻す"""
     sock = tmux_socket()
     if not sock:
         return
@@ -320,8 +351,14 @@ def show(fb, first, inbox):
     """first の発言でパネルを開き、消えるまでに inbox に来た発言は同じパネルに足す"""
     panel = Panel(first)
     wave = Wave()
-    x = MARGIN if POS == "left" else fb.width - WIDTH - MARGIN
-    y = MARGIN
+
+    def place(img):
+        """倍率を掛けた絵と、その左上の位置"""
+        if SCALE != 1:
+            img = img.resize((max(round(img.width * SCALE), 1), max(round(img.height * SCALE), 1)), Image.LANCZOS)
+        x = MARGIN_X if "left" in POS else fb.width - img.width - MARGIN_X
+        y = MARGIN_Y if "top" in POS else fb.height - img.height - MARGIN_Y
+        return img, x, y
 
     def timing(msg):
         n = len(msg["text"])
@@ -330,7 +367,7 @@ def show(fb, first, inbox):
 
     opened = time.monotonic()
     talk_until, close_at = timing(first)
-    tallest = panel.image.height
+    rect = saved = None   # パネルの描いてある範囲と、その下にあった絵
     while True:
         now = time.monotonic()
         try:
@@ -338,19 +375,25 @@ def show(fb, first, inbox):
         except queue.Empty:
             pass
         else:
-            before = panel.image.height
             panel.add(msg)
-            if panel.image.height < before:
-                repaint()   # 古い発言を落として低くなった。下に残った分を消す
-            tallest = max(tallest, panel.image.height)
             talk_until, close_at = timing(msg)
         if now >= close_at:
             break
         img = panel.image.copy()
         wave.draw(img, panel, now < talk_until)
         k = min((now - opened) / OPEN_TIME, 1.0)   # 上から下へ開く
+        img, x, y = place(img)
+        if (x, y, img.width, img.height) != rect:
+            if rect:    # 発言が足されて大きさが変わった。いったん消してから、新しい範囲の絵を取っておく
+                fb.put(rect, saved)
+                repaint()
+                time.sleep(0.05)
+            rect = (x, y, img.width, img.height)
+            saved = fb.grab(rect)
         fb.blit(img, x, y, max(int(img.height * k), 1) if k < 1 else None)
         time.sleep(max(1 / FPS - (time.monotonic() - now), 0.005))
+    if rect:
+        fb.put(rect, saved)
     repaint()
 
 
