@@ -58,6 +58,24 @@ fn Inbox::take(self : Inbox) -> Msg? {
 }
 
 ///|
+/// 届いていれば、channel の発言のうちいちばん古いもの。ほかのチャンネルの発言は queue に残しておく
+fn Inbox::take_in(self : Inbox, channel : String) -> Msg? {
+  self.pump(0)
+  for i, m in self.queue {
+    if channel_of(m) == channel {
+      return Some(self.queue.remove(i))
+    }
+  }
+  None
+}
+
+///|
+/// 発言のチャンネル名。無いのと空なのは同じに扱う
+fn channel_of(msg : Msg) -> String {
+  msg.channel.unwrap_or("")
+}
+
+///|
 /// 新着を queue に入れる。無ければ ms ミリ秒まで待つ
 fn Inbox::pump(self : Inbox, ms : Int) -> Unit {
   let now = c_now()
@@ -204,7 +222,8 @@ fn repaint() -> Unit {
 }
 
 ///|
-/// first の発言でパネルを開き、消えるまでに inbox に来た発言は同じパネルに足す
+/// first の発言でパネルを開き、消えるまでに inbox に来た同じチャンネルの発言は同じパネルに足す。
+/// ほかのチャンネルの発言は、このパネルが消えてから次のパネルで出す
 fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
   let panel = Panel::new(first)
   let wave = Wave::new()
@@ -227,7 +246,7 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
   let touch : Touch = { buf: "", }
   while !c_interrupted() {
     let now = c_now()
-    if inbox.take() is Some(msg) {
+    if inbox.take_in(channel_of(first)) is Some(msg) {
       panel.add(msg)
       let (t, c) = timing(msg)
       talk_until = t
