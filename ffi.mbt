@@ -147,3 +147,13 @@ extern "C" fn c_local_send(path : Bytes, data : Bytes) -> Int = "f1_local_send"
 
 ///|
 extern "C" fn c_read_stdin() -> Bytes = "f1_read_stdin"
+
+///|
+#borrow(path, hello)
+extern "C" fn c_touch_open(path : Bytes, hello : Bytes) -> Int = "f1_touch_open"
+
+///|
+extern "C" fn c_touch_read() -> Bytes = "f1_touch_read"
+
+///|
+extern "C" fn c_touch_close() -> Unit = "f1_touch_close"

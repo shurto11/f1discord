@@ -12,6 +12,8 @@
 // make で ./f1discord ができる (MoonBit の native バックエンド。OS と FreeType を呼ぶところだけ stub.c)。
 // 要るもの: moon、gcc、libfreetype-dev。
 //
+// パネルを触ると、時間が来る前に消える (touch-server が動いているとき)。
+//
 // 設定は config.json (実行ファイルの隣。無くてよい) に書く。変えたら systemctl --user restart f1discord。
 // 同じ名前を大文字にして F1DISCORD_ を付けた環境変数 (F1DISCORD_TEXT_SIZE など) があれば、そちらを使う:
 //     url           中継の地図のサーバー。既定 http://100.85.213.75:8020 (dynabook の tailnet の IP)
@@ -222,6 +224,7 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
   let mut talk_until = t
   let mut close_at = c
   let mut drawn : (Rect, FixedArray[Byte])? = None // パネルの描いてある範囲と、その下にあった絵
+  let touch : Touch = { buf: "", }
   while !c_interrupted() {
     let now = c_now()
     if inbox.take() is Some(msg) {
@@ -230,7 +233,7 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
       talk_until = t
       close_at = c
     }
-    if now >= close_at {
+    if now >= close_at || touch.tapped() { // 時間が来たか、パネルを触った
       break
     }
     let img = panel.image.copy()
@@ -263,6 +266,7 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
         c_sleep(0.05)
       }
       drawn = Some((rect, fb.grab(rect)))
+      touch.watch(fb, rect)
     }
     fb.blit(
       img,
@@ -276,6 +280,7 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
     )
     c_sleep(Double::max(1 / FPS - (c_now() - now), 0.005))
   }
+  touch.close()
   if drawn is Some((r, saved)) {
     fb.put(r, saved)
   }

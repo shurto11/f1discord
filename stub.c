@@ -517,3 +517,39 @@ int32_t f1_local_send(const char *path, moonbit_bytes_t data) {
 }
 
 moonbit_bytes_t f1_read_stdin(void) { return read_all(stdin); }
+
+// ---------------- タッチ ----------------
+// touch-server (タッチパネルを 1 人で読んで配るサーバー) に、パネルの範囲を申告してつなぐ。
+// その範囲のタッチが JSON の行で届く
+
+static int touch_fd = -1;
+
+void f1_touch_close(void) {
+  if (touch_fd >= 0) close(touch_fd);
+  touch_fd = -1;
+}
+
+// path の touch-server につないで、申告の 1 行 hello を送る。0: 成功
+int32_t f1_touch_open(const char *path, moonbit_bytes_t hello) {
+  f1_touch_close();
+  struct sockaddr_un addr;
+  socklen_t len = local_addr(&addr, path);
+  int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (fd < 0) return -1;
+  if (connect(fd, (struct sockaddr *)&addr, len) < 0 ||
+      send(fd, hello, (size_t)Moonbit_array_length(hello), 0) < 0) {
+    close(fd);
+    return -2;
+  }
+  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+  touch_fd = fd;
+  return 0;
+}
+
+// 届いているぶん。無ければ空 (切れていたら閉じる)
+moonbit_bytes_t f1_touch_read(void) {
+  char buf[4096];
+  ssize_t n = touch_fd < 0 ? -1 : recv(touch_fd, buf, sizeof buf, 0);
+  if (n == 0) f1_touch_close();
+  return make_bytes(buf, n > 0 ? (size_t)n : 0);
+}
