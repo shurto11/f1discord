@@ -1,5 +1,6 @@
 design.md
-__pycache__/
-*.pyc
 .claude/*.local.toml
 config.json
+/f1discord
+_build/
+.mooncakes/

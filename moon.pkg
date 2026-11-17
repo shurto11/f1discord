@@ -1,0 +1,22 @@
+import {
+  "moonbitlang/core/builtin",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/math",
+  "moonbitlang/core/random",
+}
+
+pkgtype(kind: "executable")
+
+supported_targets = "native"
+
+options(
+  "native-stub": [ "stub.c" ],
+  link: {
+    "native": {
+      "stub-cc-flags": "-O2 -I/usr/include/freetype2",
+      "cc-link-flags": "-lfreetype -lpthread",
+    },
+  },
+)
