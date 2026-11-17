@@ -37,6 +37,7 @@ struct Panel {
   number : Array[Char]
   color : Int
   channel : Array[Char]?
+  channel_size : Int // チャンネル名の字の大きさ (長い名前は、切らずに済むように小さくする)
   msgs : Array[Entry]
   mut image : Image
 }
@@ -46,16 +47,15 @@ fn Panel::new(msg : Msg) -> Panel {
   let (number, color) = driver(msg.author)
   let number = msg.number.unwrap_or(number.to_string()).to_array()
   let color = msg.color.unwrap_or(color)
-  // チャンネル名は帯の右に、幅の 4 割まで
+  // チャンネル名は帯の右に、幅の 4 割まで。はみ出すなら字を小さくし、それでも駄目なら末尾を切る
+  let limit = (settings.width - PAD * 2).to_double() * 0.4
+  let mut channel_size = settings.channel_size
   let channel = match msg.channel {
-    Some(ch) if ch != "" =>
-      Some(
-        ellipsize(
-          ['#', ..clean(ch)],
-          settings.channel_size,
-          (settings.width - PAD * 2).to_double() * 0.4,
-        ),
-      )
+    Some(ch) if ch != "" => {
+      let ch = ['#', ..clean(ch)]
+      channel_size = fit_font(ch, channel_size, limit, 12)
+      Some(ellipsize(ch, channel_size, limit))
+    }
     _ => None
   }
   let panel = {
@@ -63,6 +63,7 @@ fn Panel::new(msg : Msg) -> Panel {
     number,
     color,
     channel,
+    channel_size,
     msgs: [],
     image: Image::new(1, 1, BG),
   }
@@ -118,7 +119,7 @@ fn Panel::render(self : Panel) -> Image {
   if self.channel is Some(ch) {
     img.text(
       ch,
-      settings.channel_size,
+      self.channel_size,
       width - PAD,
       top + BAND_H / 2,
       WHITE,
@@ -160,7 +161,7 @@ fn Panel::wave_box(self : Panel) -> (Int, Int, Int, Int) {
   let x1 = settings.width -
     PAD -
     (match self.channel {
-      Some(ch) => text_width(ch, settings.channel_size).to_int() + 12
+      Some(ch) => text_width(ch, self.channel_size).to_int() + 12
       None => 0
     })
   (x0, x1, HEAD_H + BAND_H / 2, BAND_H / 2 - 8)
