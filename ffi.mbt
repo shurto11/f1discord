@@ -133,3 +133,17 @@ fn[T] die(msg : String) -> T {
   c_exit(1)
   panic()
 }
+
+///|
+#borrow(path)
+extern "C" fn c_local_bind(path : Bytes) -> Int = "f1_local_bind"
+
+///|
+extern "C" fn c_local_recv() -> Bytes = "f1_local_recv"
+
+///|
+#borrow(path, data)
+extern "C" fn c_local_send(path : Bytes, data : Bytes) -> Int = "f1_local_send"
+
+///|
+extern "C" fn c_read_stdin() -> Bytes = "f1_read_stdin"

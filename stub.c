@@ -467,3 +467,53 @@ moonbit_bytes_t f1_http_take(void) {
   free(buf);
   return b;
 }
+
+// ---------------- この PC の中からの発言 ----------------
+// 常駐しているほうが UNIX ドメインのデータグラムのソケットで待ち、f1discord --claude などが 1 通 1 発言で送る
+
+#include <sys/un.h>
+
+static int local_fd = -1;
+
+static socklen_t local_addr(struct sockaddr_un *addr, const char *path) {
+  memset(addr, 0, sizeof *addr);
+  addr->sun_family = AF_UNIX;
+  strncpy(addr->sun_path, path, sizeof addr->sun_path - 1);
+  return (socklen_t)sizeof *addr;
+}
+
+// path で待ち始める。0: 成功
+int32_t f1_local_bind(const char *path) {
+  struct sockaddr_un addr;
+  socklen_t len = local_addr(&addr, path);
+  int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+  if (fd < 0) return -1;
+  unlink(path);   // 前に動いていたときの残り
+  if (bind(fd, (struct sockaddr *)&addr, len) < 0) {
+    close(fd);
+    return -2;
+  }
+  chmod(path, 0600);
+  local_fd = fd;
+  return 0;
+}
+
+// 届いている 1 通。無ければ空
+moonbit_bytes_t f1_local_recv(void) {
+  static char buf[65536];
+  ssize_t n = local_fd < 0 ? -1 : recv(local_fd, buf, sizeof buf, 0);
+  return make_bytes(buf, n > 0 ? (size_t)n : 0);
+}
+
+// path で待っている相手に 1 通送る。0: 成功
+int32_t f1_local_send(const char *path, moonbit_bytes_t data) {
+  struct sockaddr_un addr;
+  socklen_t len = local_addr(&addr, path);
+  int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+  if (fd < 0) return -1;
+  ssize_t n = sendto(fd, data, (size_t)Moonbit_array_length(data), 0, (struct sockaddr *)&addr, len);
+  close(fd);
+  return n < 0 ? -2 : 0;
+}
+
+moonbit_bytes_t f1_read_stdin(void) { return read_all(stdin); }

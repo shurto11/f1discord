@@ -6,6 +6,8 @@
 //
 //     ./f1discord                       # 常駐して、新着を表示する
 //     ./f1discord --test 名前 "本文"    # 中継につながず、1 回だけ表示して終わる (本文は何個でも。@名前:本文 で別の人)
+//     ./f1discord --claude              # Claude Code の Stop フックに書く。回答が終わったら、常駐しているほうに
+//                                       # 回答を送って表示させる (色は Claude のオレンジ、番号はモデルの 5.2 など)
 //
 // make で ./f1discord ができる (MoonBit の native バックエンド。OS と FreeType を呼ぶところだけ stub.c)。
 // 要るもの: moon、gcc、libfreetype-dev。
@@ -64,6 +66,7 @@ fn Inbox::pump(self : Inbox, ms : Int) -> Unit {
     c_sleep(ms.to_double() / 1000)
     return
   }
+  self.receive_local()
   if !self.requesting {
     if now < self.retry_at {
       c_sleep(Double::min(ms.to_double() / 1000, self.retry_at - now))
@@ -127,7 +130,7 @@ fn Inbox::receive(self : Inbox, body : String) -> Result[Unit, String] {
     after = Int64::max(after, id)
     self.after = Some(after)
     eprint("msg \{author}: \{text}\n")
-    self.queue.push({ author, text, channel, })
+    self.queue.push({ author, text, channel, number: None, color: None, })
   }
   Ok(())
 }
@@ -281,7 +284,7 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
 
 ///|
 const USAGE : String =
-  #|usage: f1discord [-h] [--test NAME [TEXT ...]] [--channel CHANNEL]
+  #|usage: f1discord [-h] [--test NAME [TEXT ...]] [--channel CHANNEL] [--claude]
   #|
   #|Discord の通知を F1 のチームラジオ風に出す
   #|
@@ -290,6 +293,7 @@ const USAGE : String =
   #|  --test NAME [TEXT ...]
   #|                        中継につながず、NAME の発言 TEXT を表示して終わる。TEXT が @名前:本文 なら別の人の発言
   #|  --channel CHANNEL     --test のときのチャンネル名
+  #|  --claude              Claude Code の Stop フック。標準入力のフックの JSON を読んで、常駐しているほうに回答を送る
   #|
 
 ///|
@@ -315,6 +319,10 @@ fn main {
           die("--test には名前が要る")
         }
         test_words = Some(words)
+      }
+      "--claude" => {
+        claude_hook()
+        return
       }
       "--channel" if i + 1 < args.length() => {
         i += 1
@@ -348,9 +356,17 @@ fn main {
           author: t[1:colon].to_owned(),
           text: t[colon + 1:].to_owned(),
           channel: Some(channel),
+          number: None,
+          color: None,
         }
       } else {
-        { author: name, text: t, channel: Some(channel), }
+        {
+          author: name,
+          text: t,
+          channel: Some(channel),
+          number: None,
+          color: None,
+        }
       }
       // 2 つ目からは少し遅れて届いたことにする
       if n == 0 {
@@ -363,6 +379,9 @@ fn main {
     return
   }
 
+  if c_local_bind(cstr(socket_path())) != 0 {
+    eprint("local: \{socket_path()} で待てない\n")
+  }
   let inbox = Inbox::new(true)
   while !c_interrupted() {
     match inbox.take() {

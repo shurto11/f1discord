@@ -148,7 +148,11 @@ fn load_settings() -> Settings {
         _ => None
       }
       let color = match field(d, "color") {
-        Some(String(s)) => Some(hex_color(s))
+        Some(String(s)) =>
+          match parse_color(s) {
+            Some(c) => Some(c)
+            None => die("色が #RRGGBB でない: \{s}")
+          }
         _ => None
       }
       drivers[fold_name(name)] = { number, color, }
@@ -169,8 +173,8 @@ fn load_settings() -> Settings {
 }
 
 ///|
-/// "#RRGGBB" を 0xRRGGBB に
-fn hex_color(s : String) -> Int {
+/// "#RRGGBB" を 0xRRGGBB に。読めなければ None
+fn parse_color(s : String) -> Int? {
   let mut v = 0
   let mut n = 0
   for c in s.trim_start(chars="#") {
@@ -178,15 +182,16 @@ fn hex_color(s : String) -> Int {
       '0'..='9' => c.to_int() - '0'.to_int()
       'a'..='f' => c.to_int() - 'a'.to_int() + 10
       'A'..='F' => c.to_int() - 'A'.to_int() + 10
-      _ => die("色が #RRGGBB でない: \{s}")
+      _ => return None
     }
     v = v * 16 + d
     n += 1
   }
-  if n != 6 {
-    die("色が #RRGGBB でない: \{s}")
+  if n == 6 {
+    Some(v)
+  } else {
+    None
   }
-  v
 }
 
 ///|

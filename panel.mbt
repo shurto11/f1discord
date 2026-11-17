@@ -6,6 +6,8 @@ struct Msg {
   author : String
   text : String
   channel : String?
+  number : String? // 番号と色を、名前から決まるものの代わりに指定する
+  color : Int?
 }
 
 ///|
@@ -32,7 +34,7 @@ fn line_h() -> Int {
 /// 1 回の表示。開いた人 (owner) の発言は色付きで右寄せ、その間に来たほかの人の発言は白で左寄せ
 struct Panel {
   owner : String
-  number : Int
+  number : Array[Char]
   color : Int
   channel : Array[Char]?
   msgs : Array[Entry]
@@ -42,6 +44,8 @@ struct Panel {
 ///|
 fn Panel::new(msg : Msg) -> Panel {
   let (number, color) = driver(msg.author)
+  let number = msg.number.unwrap_or(number.to_string()).to_array()
+  let color = msg.color.unwrap_or(color)
   // チャンネル名は帯の右に、幅の 4 割まで
   let channel = match msg.channel {
     Some(ch) if ch != "" =>
@@ -110,13 +114,7 @@ fn Panel::render(self : Panel) -> Image {
   // 番号と波形の帯
   let top = HEAD_H
   img.rect(0, top, width, top + BAND_H, BG_BAND)
-  img.text(
-    self.number.to_string().to_array(),
-    50,
-    PAD,
-    top + BAND_H / 2,
-    mix(self.color, BG_BAND),
-  )
+  img.text(self.number, 50, PAD, top + BAND_H / 2, mix(self.color, BG_BAND))
   if self.channel is Some(ch) {
     img.text(
       ch,
@@ -158,9 +156,7 @@ fn Panel::render(self : Panel) -> Image {
 ///|
 /// 波形を描く範囲 (x0, x1, 中心の y, 高さの半分)
 fn Panel::wave_box(self : Panel) -> (Int, Int, Int, Int) {
-  let x0 = PAD +
-    text_width(self.number.to_string().to_array(), 50).to_int() +
-    12
+  let x0 = PAD + text_width(self.number, 50).to_int() + 12
   let x1 = settings.width -
     PAD -
     (match self.channel {
