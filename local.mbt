@@ -15,7 +15,7 @@ fn socket_path() -> String {
 }
 
 ///|
-/// ソケットに届いた発言 {"author", "text", "channel", "number", "color"} を queue に入れる
+/// ソケットに届いた発言 {"author", "text", "channel", "number", "color", "source"} を queue に入れる
 fn Inbox::receive_local(self : Inbox) -> Unit {
   while true {
     let data = c_local_recv()
@@ -42,6 +42,7 @@ fn Inbox::receive_local(self : Inbox) -> Unit {
       channel: str("channel"),
       number: str("number"),
       color: str("color").bind(parse_color),
+      source: str("source"),
     })
   }
 }
@@ -58,6 +59,22 @@ fn model_number(model : String) -> String {
     }
   }
   parts.join(".")
+}
+
+///|
+/// モデルの id の名前。claude-opus-5-5 は Opus、claude-fable-5-2 は Fable。分からなければ Claude
+fn model_name(model : String) -> String {
+  for part in model.split("-") {
+    if part != "claude" &&
+      part.length() > 0 &&
+      !part.iter().any(c => c >= '0' && c <= '9') {
+      let chars = part.to_array()
+      return String::from_array(
+        [c_towupper(chars[0].to_int()).unsafe_to_char(), ..chars[1:]],
+      )
+    }
+  }
+  "Claude"
 }
 
 ///|
@@ -113,11 +130,12 @@ fn claude_hook() -> Unit {
     None => cwd
   }
   let msg : Map[String, String] = {
-    "author": "Claude",
+    "author": model_name(model),
     "text": text,
     "channel": channel,
     "number": model_number(model),
     "color": CLAUDE_COLOR,
+    "source": "Claude",
   }
   // 常駐しているほうが動いていなければ、何もしない
   c_local_send(cstr(socket_path()), @utf8.encode(msg.to_json().stringify()))

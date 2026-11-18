@@ -7,7 +7,8 @@
 //     ./f1discord                       # 常駐して、新着を表示する
 //     ./f1discord --test 名前 "本文"    # 中継につながず、1 回だけ表示して終わる (本文は何個でも。@名前:本文 で別の人)
 //     ./f1discord --claude              # Claude Code の Stop フックに書く。回答が終わったら、常駐しているほうに
-//                                       # 回答を送って表示させる (色は Claude のオレンジ、番号はモデルの 5.2 など)
+//                                       # 回答を送って表示させる (名前はモデルの Opus や Fable、番号は 5.5 や 5.2、
+//                                       # 色は Claude のオレンジ、見出しの右は DISCORD の代わりに CLAUDE)
 //
 // make で ./f1discord ができる (MoonBit の native バックエンド。OS と FreeType を呼ぶところだけ stub.c)。
 // 要るもの: moon、gcc、libfreetype-dev。
@@ -150,7 +151,14 @@ fn Inbox::receive(self : Inbox, body : String) -> Result[Unit, String] {
     after = Int64::max(after, id)
     self.after = Some(after)
     eprint("msg \{author}: \{text}\n")
-    self.queue.push({ author, text, channel, number: None, color: None, })
+    self.queue.push({
+      author,
+      text,
+      channel,
+      number: None,
+      color: None,
+      source: None,
+    })
   }
   Ok(())
 }
@@ -382,6 +390,7 @@ fn main {
           channel: Some(channel),
           number: None,
           color: None,
+          source: None,
         }
       } else {
         {
@@ -390,6 +399,7 @@ fn main {
           channel: Some(channel),
           number: None,
           color: None,
+          source: None,
         }
       }
       // 2 つ目からは少し遅れて届いたことにする

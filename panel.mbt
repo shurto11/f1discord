@@ -8,6 +8,7 @@ struct Msg {
   channel : String?
   number : String? // 番号と色を、名前から決まるものの代わりに指定する
   color : Int?
+  source : String? // 見出しの右に出す発言元。無ければ DISCORD
 }
 
 ///|
@@ -36,6 +37,7 @@ struct Panel {
   owner : String
   number : Array[Char]
   color : Int
+  source : Array[Char]
   channel : Array[Char]?
   channel_size : Int // チャンネル名の字の大きさ (長い名前は、切らずに済むように小さくする)
   msgs : Array[Entry]
@@ -62,6 +64,7 @@ fn Panel::new(msg : Msg) -> Panel {
     owner: msg.author,
     number,
     color,
+    source: upper(clean(msg.source.unwrap_or("Discord"))),
     channel,
     channel_size,
     msgs: [],
@@ -106,12 +109,19 @@ fn Panel::render(self : Panel) -> Image {
   let width = settings.width
   let img = Image::new(width, self.height(), BG)
   let inner = (width - PAD * 2).to_double()
-  // 名前 (色) と RADIO (白)
+  // 名前 (色) と発言元 (白。DISCORD か CLAUDE)
   let name = upper(clean(self.owner))
   let name = if name.is_empty() { ['?'] } else { name }
   let size = fit_font(name, 34, inner, 20)
   img.text(ellipsize(name, size, inner), size, PAD, 24, self.color)
-  img.text(['R', 'A', 'D', 'I', 'O'], 30, width - PAD, 56, WHITE, right=true)
+  img.text(
+    ellipsize(self.source, 30, inner),
+    30,
+    width - PAD,
+    56,
+    WHITE,
+    right=true,
+  )
   // 番号と波形の帯
   let top = HEAD_H
   img.rect(0, top, width, top + BAND_H, BG_BAND)
