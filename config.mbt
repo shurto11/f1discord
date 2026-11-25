@@ -28,7 +28,20 @@ const SHOW_MAX : Double = 20.0
 const TALK_BASE : Double = 1.5 // 波形を大きく動かす秒数 (これに字数ぶんを足す)
 
 ///|
-const OPEN_TIME : Double = 0.25 // 開くアニメーションの秒数
+const OPEN_TIME : Double = 0.25 // 開くアニメーションの秒数 (浮かせて出すとき)
+
+///|
+const SLIDE_IN : Double = 0.35 // タスクバーに出すとき、右から滑り込ませる秒数
+
+///|
+const SLIDE_OUT : Double = 0.3 // タスクバーに出すとき、消す前に右へ引っ込める秒数
+
+///|
+const ANIM_FPS : Double = 60 // 滑らせている間のコマ数
+
+///|
+/// 波形を揺らし、本文を送る間隔 (1 / FPS より少し短く)。滑らせている間にコマを増やしても、この速さで動く
+const STEP : Double = 0.06
 
 ///|
 const BG : Int = 0x0B101E
@@ -59,6 +72,8 @@ struct Driver {
 ///|
 struct Settings {
   url : String // 中継の地図のサーバー
+  taskbar : Bool // タスクバー (task-var) の再生情報パネルの場所を借りて出す
+  bar_text_size : Int? // タスクバーに出すときの本文の字の大きさ。None ならパネルの高さから決める
   pos : String // パネルの位置。top / bottom と left / right の組み合わせ
   margin_x : Int // 画面の左右の端からの距離
   margin_y : Int // 画面の上下の端からの距離
@@ -140,6 +155,14 @@ fn load_settings() -> Settings {
     }
   }
 
+  fn flag(name : String, default : Bool) -> Bool {
+    match str(name, if default { "true" } else { "false" }).trim().to_lower() {
+      "true" | "1" | "yes" | "on" => true
+      "false" | "0" | "no" | "off" => false
+      s => die("\{name} が true / false でない: \{s}")
+    }
+  }
+
   let drivers : Map[String, Driver] = Map([])
   if config.get("drivers") is Some(Object(m)) {
     for name, d in m {
@@ -160,6 +183,11 @@ fn load_settings() -> Settings {
   }
   {
     url: str("url", "http://100.85.213.75:8020").trim_end(chars="/").to_owned(),
+    taskbar: flag("taskbar", true),
+    bar_text_size: match num("bar_text_size", 0).to_int() {
+      n if n > 0 => Some(Int::max(n, 6))
+      _ => None
+    },
     pos: str("pos", "bottom-right"),
     margin_x: num("margin_x", 0).to_int(),
     margin_y: num("margin_y", 64).to_int(),

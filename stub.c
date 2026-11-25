@@ -518,20 +518,14 @@ int32_t f1_local_send(const char *path, moonbit_bytes_t data) {
 
 moonbit_bytes_t f1_read_stdin(void) { return read_all(stdin); }
 
-// ---------------- タッチ ----------------
-// touch-server (タッチパネルを 1 人で読んで配るサーバー) に、パネルの範囲を申告してつなぐ。
-// その範囲のタッチが JSON の行で届く
+// ---------------- ストリームのソケット ----------------
+// touch-server (タッチパネルを 1 人で読んで配るサーバー) や task-var (タスクバー) に、UNIX ドメインのストリームの
+// ソケットでつなぐ。最初に申告の 1 行 (hello) を送り、あとはつないだまま、届いた行を読む
 
-static int touch_fd = -1;
+#include <poll.h>
 
-void f1_touch_close(void) {
-  if (touch_fd >= 0) close(touch_fd);
-  touch_fd = -1;
-}
-
-// path の touch-server につないで、申告の 1 行 hello を送る。0: 成功
-int32_t f1_touch_open(const char *path, moonbit_bytes_t hello) {
-  f1_touch_close();
+// path につないで hello を送る。返すのは fd (つなげなければ負)
+int32_t f1_stream_open(const char *path, moonbit_bytes_t hello) {
   struct sockaddr_un addr;
   socklen_t len = local_addr(&addr, path);
   int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -542,14 +536,28 @@ int32_t f1_touch_open(const char *path, moonbit_bytes_t hello) {
     return -2;
   }
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-  touch_fd = fd;
-  return 0;
+  return fd;
 }
 
-// 届いているぶん。無ければ空 (切れていたら閉じる)
-moonbit_bytes_t f1_touch_read(void) {
+// fd に届いているぶん。無ければ wait_ms ミリ秒まで待つ。それでも無ければ空
+moonbit_bytes_t f1_stream_read(int32_t fd, int32_t wait_ms) {
   char buf[4096];
-  ssize_t n = touch_fd < 0 ? -1 : recv(touch_fd, buf, sizeof buf, 0);
-  if (n == 0) f1_touch_close();
+  ssize_t n = -1;
+  if (fd >= 0) {
+    struct pollfd p = {.fd = fd, .events = POLLIN};
+    if (wait_ms <= 0 || poll(&p, 1, wait_ms) > 0) n = recv(fd, buf, sizeof buf, 0);
+  }
   return make_bytes(buf, n > 0 ? (size_t)n : 0);
+}
+
+// 相手がまだつないでいるか。届いているぶんは読まずに残す
+int32_t f1_stream_alive(int32_t fd) {
+  if (fd < 0) return 0;
+  char c;
+  ssize_t n = recv(fd, &c, 1, MSG_PEEK | MSG_DONTWAIT);
+  return n > 0 || (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR));
+}
+
+void f1_stream_close(int32_t fd) {
+  if (fd >= 0) close(fd);
 }

@@ -44,6 +44,20 @@ fn Image::rect(
 }
 
 ///|
+/// src を (x, y) に重ねる (はみ出すところは切る)
+fn Image::paste(self : Image, src : Image, x : Int, y : Int) -> Unit {
+  for j in Int::max(-y, 0)..<Int::min(src.h, self.h - y) {
+    for i in Int::max(-x, 0)..<Int::min(src.w, self.w - x) {
+      let d = ((y + j) * self.w + x + i) * 3
+      let s = (j * src.w + i) * 3
+      self.data[d] = src.data[s]
+      self.data[d + 1] = src.data[s + 1]
+      self.data[d + 2] = src.data[s + 2]
+    }
+  }
+}
+
+///|
 /// 字を描く。上下は cy が字の真ん中、左右は x が左端 (right なら右端) になるように置く
 fn Image::text(
   self : Image,
@@ -242,17 +256,62 @@ fn Framebuffer::blit(
   if h <= 0 || img.w <= 0 {
     return
   }
-  let (rs, gs, bs) = self.shifts
   let buf = FixedArray::make(img.w * h * 4, b'\x00')
   for i in 0..<(img.w * h) {
-    let v = (img.data[i * 3].to_uint() << rs) |
-      (img.data[i * 3 + 1].to_uint() << gs) |
-      (img.data[i * 3 + 2].to_uint() << bs) |
-      0xFF000000U
-    buf[i * 4] = v.to_byte()
-    buf[i * 4 + 1] = (v >> 8).to_byte()
-    buf[i * 4 + 2] = (v >> 16).to_byte()
-    buf[i * 4 + 3] = (v >> 24).to_byte()
+    self.pixel(img, i, buf, i)
   }
   c_fb_write(x, y, img.w, h, buf)
+}
+
+///|
+/// img を、左端を shift だけ右へずらして (x, y) に描く。右にはみ出すぶんは切り、空いた左には
+/// under (grab で取っておいた、その範囲の下の絵) を残す。右から滑り込ませる・右へ引っ込めるときに使う
+fn Framebuffer::blit_slide(
+  self : Framebuffer,
+  img : Image,
+  x : Int,
+  y : Int,
+  shift : Int,
+  under : FixedArray[Byte],
+) -> Unit {
+  let w = img.w
+  let h = Int::min(img.h, self.height - y)
+  if h <= 0 || w <= 0 || under.length() < w * h * 4 {
+    return
+  }
+  let shift = Int::min(Int::max(shift, 0), w)
+  let buf = FixedArray::make(w * h * 4, b'\x00')
+  for j in 0..<h {
+    for i in 0..<w {
+      let o = j * w + i
+      if i < shift {
+        for c in 0..<4 {
+          buf[o * 4 + c] = under[o * 4 + c]
+        }
+      } else {
+        self.pixel(img, j * w + i - shift, buf, o)
+      }
+    }
+  }
+  c_fb_write(x, y, w, h, buf)
+}
+
+///|
+/// img の i 番目のピクセルを、フレームバッファの並びにして buf の o 番目に書く
+fn Framebuffer::pixel(
+  self : Framebuffer,
+  img : Image,
+  i : Int,
+  buf : FixedArray[Byte],
+  o : Int,
+) -> Unit {
+  let (rs, gs, bs) = self.shifts
+  let v = (img.data[i * 3].to_uint() << rs) |
+    (img.data[i * 3 + 1].to_uint() << gs) |
+    (img.data[i * 3 + 2].to_uint() << bs) |
+    0xFF000000U
+  buf[o * 4] = v.to_byte()
+  buf[o * 4 + 1] = (v >> 8).to_byte()
+  buf[o * 4 + 2] = (v >> 16).to_byte()
+  buf[o * 4 + 3] = (v >> 24).to_byte()
 }

@@ -15,9 +15,19 @@
 //
 // パネルを触ると、時間が来る前に消える (touch-server が動いているとき)。
 //
+// タスクバー (task-var) が動いていれば、パネルはその Spotify の再生情報パネルの場所を借りて、そこに横長に出す
+// (横はそのパネルの左端からタスクバーの右端まで、縦はタスクバーの高さ全部。タスクバーの高さは変えない)。右から左へ滑り込んで出て、消えるときは
+// 右へ引っ込む。左に色の帯、名前、番号と波形、右にチャンネル名と発言元、その下に本文を 2 行。
+// 長い本文は、読み終わるころに 1 行ずつ下から送る。借りている間は task-var がそこを描かず、消すと描き直す。
+// task-var が居ない、またはバーを隠しているときは、これまでどおり画面の隅に浮かせて出す。
+//
 // 設定は config.json (実行ファイルの隣。無くてよい) に書く。変えたら systemctl --user restart f1discord。
 // 同じ名前を大文字にして F1DISCORD_ を付けた環境変数 (F1DISCORD_TEXT_SIZE など) があれば、そちらを使う:
 //     url           中継の地図のサーバー。既定 http://100.85.213.75:8020 (dynabook の tailnet の IP)
+//     taskbar       タスクバーの再生情報パネルの場所を借りて出すか。既定 true。false なら、いつも浮かせて出す
+//     bar_text_size タスクバーに出すときの本文の字の大きさ (画面のピクセル数。scale は掛けない)。
+//                   既定はタスクバーの高さから決まる (高さ 64 で 15)。大きくすると、出せる行が減る
+//     ここから下は、浮かせて出すときの設定:
 //     pos           パネルの位置。top / bottom と left / right の組み合わせ。既定 bottom-right
 //     margin_x      画面の左右の端からの距離 (画面のピクセル数)。既定 0
 //     margin_y      画面の上下の端からの距離。既定 64 (画面の下のタスクバーの高さ。パネルの下辺がその上辺に付く)
@@ -231,9 +241,14 @@ fn repaint() -> Unit {
 
 ///|
 /// first の発言でパネルを開き、消えるまでに inbox に来た同じチャンネルの発言は同じパネルに足す。
-/// ほかのチャンネルの発言は、このパネルが消えてから次のパネルで出す
+/// ほかのチャンネルの発言は、このパネルが消えてから次のパネルで出す。
+/// タスクバー (task-var) が動いていれば、その再生情報パネルの場所を借りて横長に出す。借りられなければ浮かせて出す
 fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
-  let panel = Panel::new(first)
+  let lease = if settings.taskbar { Lease::borrow() } else { None }
+  let panel = Panel::new(
+    first,
+    lease.map(l => BarLayout::new(l.rect.w, l.rect.h)),
+  )
   let wave = Wave::new()
   let scale = settings.scale
   // 波形を大きく動かす終わりの時刻と、パネルを消す時刻
@@ -249,41 +264,53 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
   let opened = c_now()
   let (t, c) = timing(first)
   let mut talk_until = t
-  let mut close_at = c
+  let mut close_at = panel.close_after(c)
   let mut drawn : (Rect, FixedArray[Byte])? = None // パネルの描いてある範囲と、その下にあった絵
-  let touch : Touch = { buf: "", }
+  let touch = Touch::new()
+  let mut lost = false // 借りた場所を取り上げられた
   while !c_interrupted() {
     let now = c_now()
     if inbox.take_in(channel_of(first)) is Some(msg) {
       panel.add(msg)
       let (t, c) = timing(msg)
       talk_until = t
-      close_at = c
+      close_at = panel.close_after(c)
     }
     if now >= close_at || touch.tapped() { // 時間が来たか、パネルを触った
       break
     }
-    let img = panel.image.copy()
-    wave.draw(img, panel, now < talk_until)
-    let k = Double::min((now - opened) / OPEN_TIME, 1.0) // 上から下へ開く
-    // 倍率を掛けた絵と、その左上の位置
-    let img = if scale != 1 {
-      img.resize(
-        Int::max((img.w.to_double() * scale).round().to_int(), 1),
-        Int::max((img.h.to_double() * scale).round().to_int(), 1),
-      )
-    } else {
-      img
+    if lease is Some(l) && !l.alive() { // task-var がバーを隠すので、場所を取り上げられた
+      eprint("taskbar: 場所を取り上げられた\n")
+      lost = true
+      break
     }
-    let x = if settings.pos.contains("left") {
-      settings.margin_x
-    } else {
-      fb.width - img.w - settings.margin_x
-    }
-    let y = if settings.pos.contains("top") {
-      settings.margin_y
-    } else {
-      fb.height - img.h - settings.margin_y
+    let img = panel.frame(now)
+    wave.draw(img, panel, now < talk_until, now)
+    let k = Double::min((now - opened) / OPEN_TIME, 1.0) // 上から下へ開く (浮かせて出すとき)
+    // 描く絵と、その左上の位置
+    let (img, x, y) = match lease {
+      Some(l) => (img, l.rect.x, l.rect.y)
+      None => {
+        let img = if scale != 1 {
+          img.resize(
+            Int::max((img.w.to_double() * scale).round().to_int(), 1),
+            Int::max((img.h.to_double() * scale).round().to_int(), 1),
+          )
+        } else {
+          img
+        }
+        let x = if settings.pos.contains("left") {
+          settings.margin_x
+        } else {
+          fb.width - img.w - settings.margin_x
+        }
+        let y = if settings.pos.contains("top") {
+          settings.margin_y
+        } else {
+          fb.height - img.h - settings.margin_y
+        }
+        (img, x, y)
+      }
     }
     let rect = { x, y, w: img.w, h: img.h, }
     if !(drawn is Some((r, _)) && r == rect) {
@@ -295,23 +322,60 @@ fn show(fb : Framebuffer, first : Msg, inbox : Inbox) -> Unit {
       drawn = Some((rect, fb.grab(rect)))
       touch.watch(fb, rect)
     }
-    fb.blit(
-      img,
-      x,
-      y,
-      if k < 1 {
-        Int::max((img.h.to_double() * k).to_int(), 1)
-      } else {
-        img.h
-      },
-    )
-    c_sleep(Double::max(1 / FPS - (c_now() - now), 0.005))
+    let rows = if k < 1 {
+      Int::max((img.h.to_double() * k).to_int(), 1)
+    } else {
+      img.h
+    }
+    // タスクバーでは右から左へ滑り込ませる。空いた左には、借りる前の絵 (再生情報パネル) を残す
+    let sliding = lease is Some(_) && now - opened < SLIDE_IN
+    match (lease, drawn) {
+      (Some(_), Some((_, saved))) => {
+        let p = Double::min((now - opened) / SLIDE_IN, 1.0)
+        let shown = 1.0 - (1.0 - p) * (1.0 - p) * (1.0 - p) // 速く入って、ゆっくり止まる
+        fb.blit_slide(img, x, y, slide_shift(img.w, shown), saved)
+      }
+      _ => fb.blit(img, x, y, rows)
+    }
+    let fps = if sliding { ANIM_FPS } else { FPS }
+    c_sleep(Double::max(1 / fps - (c_now() - now), 0.005))
   }
   touch.close()
-  if drawn is Some((r, saved)) {
-    fb.put(r, saved)
+  match lease {
+    // 右へ引っ込めてから返す。返せば task-var がすぐ描き直す
+    // (取り上げられたときは、もうバーを隠しているので、引っ込めずにすぐ返す)
+    Some(l) => {
+      if !lost && drawn is Some((r, saved)) {
+        let start = c_now()
+        while !c_interrupted() && l.alive() {
+          let now = c_now()
+          let p = (now - start) / SLIDE_OUT
+          if p >= 1 {
+            break
+          }
+          let img = panel.frame(now)
+          wave.draw(img, panel, now < talk_until, now)
+          let shown = 1.0 - p * p * p // ゆっくり動き出して、速く抜ける
+          fb.blit_slide(img, r.x, r.y, slide_shift(img.w, shown), saved)
+          c_sleep(Double::max(1 / ANIM_FPS - (c_now() - now), 0.005))
+        }
+        fb.put(r, saved) // 引っ込めきった絵。task-var が描き直すまでの間も、パネルの切れ端を残さない
+      }
+      l.give_back()
+    }
+    None => {
+      if drawn is Some((r, saved)) {
+        fb.put(r, saved)
+      }
+      repaint()
+    }
   }
-  repaint()
+}
+
+///|
+/// 幅 w のパネルを、shown の割合 (0 から 1) だけ右から出しているときの、左端のずれ
+fn slide_shift(w : Int, shown : Double) -> Int {
+  (w.to_double() * (1 - shown)).round().to_int()
 }
 
 ///|

@@ -8,7 +8,13 @@ const TOUCH_PRIORITY : Int = 20
 
 ///|
 struct Touch {
+  mut fd : Int // touch-server とのつなぎ。つないでいなければ負
   mut buf : String // 届いたうち、まだ行になっていないぶん
+}
+
+///|
+fn Touch::new() -> Touch {
+  { fd: -1, buf: "", }
 }
 
 ///|
@@ -33,8 +39,9 @@ fn Touch::watch(self : Touch, fb : Framebuffer, rect : Rect) -> Unit {
   let hello =
     $|{"hello":"f1discord","pane":null,"region":{"left":\{left},"top":\{top},"right":\{right},"bottom":\{bottom}},"priority":\{TOUCH_PRIORITY}}
     $|
+  self.close()
   self.buf = ""
-  c_touch_open(cstr(touch_socket()), @utf8.encode(hello)) |> ignore
+  self.fd = c_stream_open(cstr(touch_socket()), @utf8.encode(hello))
 }
 
 ///|
@@ -42,7 +49,7 @@ fn Touch::watch(self : Touch, fb : Framebuffer, rect : Rect) -> Unit {
 fn Touch::tapped(self : Touch) -> Bool {
   let mut tapped = false
   while true {
-    let data = c_touch_read()
+    let data = c_stream_read(self.fd, 0)
     if data.length() == 0 {
       break
     }
@@ -60,6 +67,7 @@ fn Touch::tapped(self : Touch) -> Bool {
 }
 
 ///|
-fn Touch::close(_self : Touch) -> Unit {
-  c_touch_close()
+fn Touch::close(self : Touch) -> Unit {
+  c_stream_close(self.fd)
+  self.fd = -1
 }

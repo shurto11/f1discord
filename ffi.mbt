@@ -150,10 +150,13 @@ extern "C" fn c_read_stdin() -> Bytes = "f1_read_stdin"
 
 ///|
 #borrow(path, hello)
-extern "C" fn c_touch_open(path : Bytes, hello : Bytes) -> Int = "f1_touch_open"
+extern "C" fn c_stream_open(path : Bytes, hello : Bytes) -> Int = "f1_stream_open"
 
 ///|
-extern "C" fn c_touch_read() -> Bytes = "f1_touch_read"
+extern "C" fn c_stream_read(fd : Int, wait_ms : Int) -> Bytes = "f1_stream_read"
 
 ///|
-extern "C" fn c_touch_close() -> Unit = "f1_touch_close"
+extern "C" fn c_stream_alive(fd : Int) -> Bool = "f1_stream_alive"
+
+///|
+extern "C" fn c_stream_close(fd : Int) -> Unit = "f1_stream_close"
